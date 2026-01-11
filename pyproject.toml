@@ -1,0 +1,29 @@
+[project]
+name = "cogit"
+version = "0.1.0"
+description = "Continuous Obsidian Git Incremental Tracking"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "User", email = "user@example.com"}
+]
+dependencies = [
+    "PyQt6>=6.6.1",
+    "GitPython>=3.1.41",
+    "tomlkit>=0.12.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.12.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

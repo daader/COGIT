@@ -1,0 +1,5 @@
+
+# Cogit managed ignores
+.obsidian/workspace*
+.obsidian/cache
+.obsidian/plugins/*/data.json
