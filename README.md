@@ -13,6 +13,8 @@ Cogit is designed to be:
 *   **Safe**: Checks for conflicts or "Remote Ahead" states before you start working.
 *   **Simple**: A clean UI that tells you exactly what you need to know (Green = Good, Orange = Push needed, Blue = Pull needed).
 
+![Cogit Screenshot](ui/resources/screenshot.png)
+
 ## Architecture
 
 The application follows a clean separation of concerns, ensuring logic is testable and independent of the UI.
