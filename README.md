@@ -89,4 +89,4 @@ Configuration is stored in `~/.config/cogit/config.toml`. You can change setting
 ## Contributing
 
 1.  Run tests with `pytest`.
-2.  Ensure code follows the architecture (keep logic in `core/`).
+2.  Ensure code follows the architecture (keep logic in `core/`).t
