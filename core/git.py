@@ -55,10 +55,68 @@ class GitManager:
             raise RuntimeError(f"Commit failed: {e}")
 
     def push(self) -> str:
-        """Pushes to remote."""
+        """Pushes to remote, automatically syncing if remote has unpulled changes.
+        
+        If there are unpulled remote changes, uses stash-pull-pop workflow
+        to merge local changes with remote. Otherwise, just pushes normally.
+        """
         self._ensure_repo()
+        messages = []
+        
         try:
             origin = self.repo.remotes.origin
+            
+            # Fetch to check if remote has changes
+            origin.fetch()
+            
+            # Check if remote is ahead of local
+            active_branch = self.repo.active_branch
+            tracking_branch = active_branch.tracking_branch()
+            
+            remote_ahead = False
+            if tracking_branch:
+                local_commit = self.repo.head.commit
+                remote_commit = tracking_branch.commit
+                # Check if remote has commits we don't have
+                remote_ahead = local_commit != remote_commit and \
+                    remote_commit not in self.repo.merge_base(local_commit, remote_commit)
+            
+            # Only do stash-pull-pop if remote is ahead
+            if remote_ahead:
+                had_stash = False
+                
+                # Step 1: Stash local changes if any exist
+                if self.repo.is_dirty(untracked_files=True):
+                    self.repo.git.stash('push', '-u', '-m', 'Auto-stash before sync')
+                    had_stash = True
+                    messages.append("Stashed local changes.")
+                
+                # Step 2: Pull remote changes
+                try:
+                    origin.pull()
+                    messages.append("Pulled remote changes.")
+                except Exception as pull_error:
+                    # If pull fails and we stashed, try to restore
+                    if had_stash:
+                        try:
+                            self.repo.git.stash('pop')
+                        except:
+                            pass
+                    raise RuntimeError(f"Pull failed during sync: {pull_error}")
+                
+                # Step 3: Pop stash to merge local changes back
+                if had_stash:
+                    try:
+                        self.repo.git.stash('pop')
+                        messages.append("Restored local changes.")
+                    except Exception as stash_error:
+                        raise RuntimeError(
+                            f"Merge conflict while restoring local changes: {stash_error}\n"
+                            "Your changes are still saved in the stash. "
+                            "Run 'git stash pop' manually to resolve conflicts."
+                        )
+            
+            # Step 4: Push to remote
             push_info_list = origin.push()
             
             # Check for errors in push info
@@ -70,7 +128,11 @@ class GitManager:
             if errors:
                 raise RuntimeError("\n".join(errors))
             
-            return "Push successful."
+            messages.append("Push successful.")
+            return "\n".join(messages)
+            
+        except RuntimeError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Push failed: {e}")
 
