@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Cogit"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Cogit Open Source"
 #define MyAppURL "https://github.com/user/cogit"
 #define MyAppExeName "Cogit.exe"
@@ -22,8 +22,8 @@ DefaultDirName={autopf}\{#MyAppName}
 DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only.)
 ;PrivilegesRequired=lowest
-OutputDir=.
-OutputBaseFilename=Cogit_v1_Setup
+OutputDir=dist
+OutputBaseFilename=Cogit_v2_Setup
 SetupIconFile=ui\resources\icon.ico
 Compression=lzma
 SolidCompression=yes

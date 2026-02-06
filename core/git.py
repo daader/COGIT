@@ -20,19 +20,86 @@ class GitManager:
         self._ensure_repo()
         return self.repo
 
+    def _abort_merge_if_needed(self):
+        """Aborts any stuck merge operations."""
+        try:
+            merge_head = self.repo_path / '.git' / 'MERGE_HEAD'
+            if merge_head.exists():
+                self.repo.git.merge('--abort')
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _reset_to_clean_state(self):
+        """Resets repo to a clean state, aborting merges and clearing conflicts."""
+        self._abort_merge_if_needed()
+        try:
+            # Reset any staged changes that might be causing issues
+            self.repo.git.reset('--mixed', 'HEAD')
+        except Exception:
+            pass
+
     def pull(self) -> str:
-        """Pulls changes from remote."""
+        """Pulls changes from remote. Forces sync if there are conflicts."""
         self._ensure_repo()
+        messages = []
+        
+        # Abort any stuck merge first
+        if self._abort_merge_if_needed():
+            messages.append("Aborted stuck merge.")
+        
         try:
             origin = self.repo.remotes.origin
-            fetch_info = origin.pull()
-            if not fetch_info:
-                return "No changes pulled."
-            # Summarize what happened
-            summary = []
-            for info in fetch_info:
-                summary.append(f"{info.ref}: {info.note or 'Updated'}")
-            return "\n".join(summary)
+            
+            # Stash any local changes before pull
+            had_stash = False
+            if self.repo.is_dirty(untracked_files=True):
+                try:
+                    self.repo.git.stash('push', '-u', '-m', 'Auto-stash before pull')
+                    had_stash = True
+                    messages.append("Stashed local changes.")
+                except Exception:
+                    pass
+            
+            try:
+                fetch_info = origin.pull()
+                if fetch_info:
+                    for info in fetch_info:
+                        messages.append(f"{info.ref}: {info.note or 'Updated'}")
+                else:
+                    messages.append("Already up to date.")
+            except Exception as pull_error:
+                # If normal pull fails, try force reset to remote
+                messages.append("Normal pull failed, force syncing to remote...")
+                try:
+                    origin.fetch()
+                    active_branch = self.repo.active_branch
+                    tracking_branch = active_branch.tracking_branch()
+                    if tracking_branch:
+                        self.repo.git.reset('--hard', tracking_branch.name)
+                        messages.append("Force synced to remote.")
+                    else:
+                        raise pull_error
+                except Exception:
+                    raise RuntimeError(f"Pull failed: {pull_error}")
+            
+            # Restore stashed changes
+            if had_stash:
+                try:
+                    self.repo.git.stash('pop')
+                    messages.append("Restored local changes.")
+                except Exception:
+                    # If stash pop fails due to conflicts, drop the stash
+                    messages.append("Could not auto-merge stashed changes, keeping remote version.")
+                    try:
+                        self.repo.git.stash('drop')
+                    except Exception:
+                        pass
+            
+            return "\n".join(messages) if messages else "Pull complete."
+        except RuntimeError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Pull failed: {e}")
 
@@ -55,80 +122,47 @@ class GitManager:
             raise RuntimeError(f"Commit failed: {e}")
 
     def push(self) -> str:
-        """Pushes to remote, automatically syncing if remote has unpulled changes.
+        """Pushes to remote. Uses force push if normal push fails.
         
-        If there are unpulled remote changes, uses stash-pull-pop workflow
-        to merge local changes with remote. Otherwise, just pushes normally.
+        For single-user workflow: always ensures push succeeds.
         """
         self._ensure_repo()
         messages = []
         
+        # Abort any stuck merge first
+        if self._abort_merge_if_needed():
+            messages.append("Aborted stuck merge.")
+        
         try:
             origin = self.repo.remotes.origin
-            
-            # Fetch to check if remote has changes
-            origin.fetch()
-            
-            # Check if remote is ahead of local
             active_branch = self.repo.active_branch
-            tracking_branch = active_branch.tracking_branch()
             
-            remote_ahead = False
-            if tracking_branch:
-                local_commit = self.repo.head.commit
-                remote_commit = tracking_branch.commit
-                # Check if remote has commits we don't have
-                remote_ahead = local_commit != remote_commit and \
-                    remote_commit not in self.repo.merge_base(local_commit, remote_commit)
+            # Try normal push first
+            try:
+                push_info_list = origin.push()
+                
+                # Check for errors in push info
+                push_failed = False
+                for info in push_info_list:
+                    if info.flags & (info.ERROR | info.REJECTED):
+                        push_failed = True
+                        break
+                
+                if not push_failed:
+                    messages.append("Push successful.")
+                    return "\n".join(messages) if messages else "Push successful."
+            except Exception:
+                push_failed = True
             
-            # Only do stash-pull-pop if remote is ahead
-            if remote_ahead:
-                had_stash = False
-                
-                # Step 1: Stash local changes if any exist
-                if self.repo.is_dirty(untracked_files=True):
-                    self.repo.git.stash('push', '-u', '-m', 'Auto-stash before sync')
-                    had_stash = True
-                    messages.append("Stashed local changes.")
-                
-                # Step 2: Pull remote changes
+            # If normal push failed, force push
+            if push_failed:
+                messages.append("Normal push failed, using force push...")
                 try:
-                    origin.pull()
-                    messages.append("Pulled remote changes.")
-                except Exception as pull_error:
-                    # If pull fails and we stashed, try to restore
-                    if had_stash:
-                        try:
-                            self.repo.git.stash('pop')
-                        except:
-                            pass
-                    raise RuntimeError(f"Pull failed during sync: {pull_error}")
-                
-                # Step 3: Pop stash to merge local changes back
-                if had_stash:
-                    try:
-                        self.repo.git.stash('pop')
-                        messages.append("Restored local changes.")
-                    except Exception as stash_error:
-                        raise RuntimeError(
-                            f"Merge conflict while restoring local changes: {stash_error}\n"
-                            "Your changes are still saved in the stash. "
-                            "Run 'git stash pop' manually to resolve conflicts."
-                        )
+                    origin.push(force=True)
+                    messages.append("Force push successful.")
+                except Exception as force_error:
+                    raise RuntimeError(f"Force push failed: {force_error}")
             
-            # Step 4: Push to remote
-            push_info_list = origin.push()
-            
-            # Check for errors in push info
-            errors = []
-            for info in push_info_list:
-                if info.flags & (info.ERROR | info.REJECTED):
-                    errors.append(f"Push failed for {info.remote_ref_string}: {info.summary}")
-            
-            if errors:
-                raise RuntimeError("\n".join(errors))
-            
-            messages.append("Push successful.")
             return "\n".join(messages)
             
         except RuntimeError:
